@@ -1,0 +1,7 @@
+// hello.nyx
+import "nyx/sys"
+
+fn main() -> i32 {
+    sys::write(1, "Hello from NyxC on NyxaraOS!\n", 30)
+    return 0
+}
