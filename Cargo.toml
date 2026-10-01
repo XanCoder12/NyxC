@@ -1,0 +1,14 @@
+[package]
+name = "nyxc"
+version = "0.1.0"
+edition = "2021"
+authors = ["Akrom"]
+description = "Compiler for the NyxC systems programming language targeting NyxaraOS"
+
+[lib]
+name = "nyxc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nyxc"
+path = "src/main.rs"
