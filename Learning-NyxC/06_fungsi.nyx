@@ -1,0 +1,24 @@
+// 06_fungsi.nyx
+// Belajar membuat dan memanggil fungsi sendiri
+import "nyx/sys"
+
+fn tambah(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+fn kuadrat(n: i32) -> i32 {
+    return n * n
+}
+
+fn cetak_ok() {
+    sys::write(1, "Fungsi OK!\n", 11)
+}
+
+fn main() -> i32 {
+    let hasil: i32 = tambah(10, 20)
+    let pangkat: i32 = kuadrat(5)
+
+    // hasil = 30, pangkat = 25
+    cetak_ok()
+    return 0
+}

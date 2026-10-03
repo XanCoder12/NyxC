@@ -1,0 +1,15 @@
+// 07_syscall.nyx
+// Belajar memanggil syscall kernel Nyxara OS secara langsung
+import "nyx/sys"
+
+fn main() -> i32 {
+    // Syscall 1 = SYS_WRITE (fd, buffer, length)
+    // fd 1 = stdout
+    sys::write(1, "Memanggil sys::write langsung!\n", 31)
+
+    // Syscall 2 = SYS_READ (fd, buffer, length)
+    // Syscall 3 = SYS_EXIT (exit_code)
+    // sys::exit(0)
+    
+    return 0
+}

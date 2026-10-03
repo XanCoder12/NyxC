@@ -1,0 +1,16 @@
+// 05_while.nyx
+// Belajar perulangan while
+import "nyx/sys"
+
+fn main() -> i32 {
+    let mut i: i32 = 0
+
+    // cetak "Loop!\n" sebanyak 5 kali
+    while i < 5 {
+        sys::write(1, "Loop!\n", 6)
+        i = i + 1
+    }
+
+    sys::write(1, "Selesai.\n", 9)
+    return 0
+}

@@ -1,0 +1,17 @@
+// 02_variabel.nyx
+// Belajar deklarasi variabel dan konstanta
+import "nyx/sys"
+
+const MAX: i32 = 100
+
+fn main() -> i32 {
+    let x: i32 = 42
+    let mut y: i32 = 10
+
+    // variabel mutable bisa diubah nilainya
+    y = y + x
+
+    // cetak pesan berhasil
+    sys::write(1, "Variabel OK!\n", 13)
+    return 0
+}

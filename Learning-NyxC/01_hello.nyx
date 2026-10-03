@@ -1,0 +1,8 @@
+// 01_hello.nyx
+// Program paling sederhana: cetak teks ke layar
+import "nyx/sys"
+
+fn main() -> i32 {
+    sys::write(1, "Halo Dunia!\n", 12)
+    return 0
+}

@@ -1,0 +1,18 @@
+// 03_aritmatika.nyx
+// Belajar operasi aritmatika: + - * / %
+import "nyx/sys"
+
+fn main() -> i32 {
+    let a: i32 = 15
+    let b: i32 = 4
+
+    let tambah: i32 = a + b
+    let kurang: i32 = a - b
+    let kali: i32 = a * b
+    let bagi: i32 = a / b
+    let sisa: i32 = a % b
+
+    // 15 + 4 = 19, 15 - 4 = 11, 15 * 4 = 60, 15 / 4 = 3, 15 % 4 = 3
+    sys::write(1, "Aritmatika OK!\n", 15)
+    return 0
+}

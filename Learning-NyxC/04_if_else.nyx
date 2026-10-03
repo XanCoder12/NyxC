@@ -1,0 +1,26 @@
+// 04_if_else.nyx
+// Belajar percabangan if / else
+import "nyx/sys"
+
+fn main() -> i32 {
+    let umur: i32 = 20
+
+    if umur >= 17 {
+        sys::write(1, "Sudah dewasa!\n", 14)
+    } else {
+        sys::write(1, "Masih anak-anak.\n", 17)
+    }
+
+    let nilai: i32 = 85
+    if nilai >= 80 {
+        sys::write(1, "Nilai: A\n", 9)
+    } else {
+        if nilai >= 60 {
+            sys::write(1, "Nilai: B\n", 9)
+        } else {
+            sys::write(1, "Nilai: C\n", 9)
+        }
+    }
+
+    return 0
+}
