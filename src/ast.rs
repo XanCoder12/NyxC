@@ -22,6 +22,20 @@ impl Type {
             Type::Void => 0,
         }
     }
+
+    pub fn name(&self) -> String {
+        match self {
+            Type::I8 => "i8".into(),
+            Type::I16 => "i16".into(),
+            Type::I32 => "i32".into(),
+            Type::U8 => "u8".into(),
+            Type::U16 => "u16".into(),
+            Type::U32 => "u32".into(),
+            Type::Bool => "bool".into(),
+            Type::Void => "void".into(),
+            Type::Pointer(inner) => format!("*{}", inner.name()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +123,7 @@ pub enum Stmt {
     },
     Const {
         name: String,
-        ty: Type,
+        ty: Option<Type>,
         init: Expr,
         span: Span,
     },
