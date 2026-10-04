@@ -1,14 +1,14 @@
 // NyxC Standard Library: NyxaraOS System Call Interface
 
-const SYS_EXIT: i32 = 1
-const SYS_FORK: i32 = 2
-const SYS_READ: i32 = 3
-const SYS_WRITE: i32 = 4
-const SYS_OPEN: i32 = 5
-const SYS_CLOSE: i32 = 6
-const SYS_WAITPID: i32 = 7
-const SYS_EXECVE: i32 = 11
-const SYS_GETPID: i32 = 20
+const SYS_EXIT = 1
+const SYS_FORK = 2
+const SYS_READ = 3
+const SYS_WRITE = 4
+const SYS_OPEN = 5
+const SYS_CLOSE = 6
+const SYS_WAITPID = 7
+const SYS_EXECVE = 11
+const SYS_GETPID = 20
 
 extern fn sys_exit(status: i32)
 extern fn sys_write(fd: i32, buf: *u8, len: i32) -> i32
@@ -17,3 +17,6 @@ extern fn sys_fork() -> i32
 extern fn sys_waitpid(pid: i32, status: *i32, options: i32) -> i32
 extern fn sys_execve(path: *u8, argv: **u8, envp: **u8) -> i32
 extern fn sys_getpid() -> i32
+
+// Compiler built-ins (always available, no import needed):
+//   str_len(s: *u8) -> i32   length of a NUL-terminated string
