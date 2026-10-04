@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::error::CompileError;
 use crate::sema::SemanticAnalyzer;
 
 pub struct X86GasCodegen<'a> {
@@ -45,7 +46,7 @@ impl<'a> X86GasCodegen<'a> {
         id
     }
 
-    pub fn generate(&mut self, program: &Program) -> Result<String, String> {
+    pub fn generate(&mut self, program: &Program) -> Result<String, CompileError> {
         let mut text_section = String::new();
         let mut has_main = false;
         let mut has_start = false;
@@ -104,7 +105,7 @@ impl<'a> X86GasCodegen<'a> {
         res
     }
 
-    fn generate_fn(&mut self, def: &FnDef, body: &[Stmt]) -> Result<String, String> {
+    fn generate_fn(&mut self, def: &FnDef, body: &[Stmt]) -> Result<String, CompileError> {
         let mut asm = String::new();
         let fn_label = def.name.clone();
         let end_label = format!(".L_end_{}", fn_label);
@@ -131,7 +132,7 @@ impl<'a> X86GasCodegen<'a> {
         Ok(asm)
     }
 
-    fn generate_stmt(&mut self, stmt: &Stmt) -> Result<String, String> {
+    fn generate_stmt(&mut self, stmt: &Stmt) -> Result<String, CompileError> {
         let mut asm = String::new();
 
         match stmt {
@@ -203,7 +204,7 @@ impl<'a> X86GasCodegen<'a> {
         Ok(asm)
     }
 
-    fn generate_expr(&mut self, expr: &Expr) -> Result<String, String> {
+    fn generate_expr(&mut self, expr: &Expr) -> Result<String, CompileError> {
         let mut asm = String::new();
 
         match expr {
@@ -221,21 +222,33 @@ impl<'a> X86GasCodegen<'a> {
                 if let Some(sym) = self.lookup_var(name) {
                     asm.push_str(&format!("    mov eax, [ebp + ({})]\n", sym.offset));
                 } else {
-                    return Err(format!("Undefined variable '{}' at {}:{}", name, span.line, span.col));
+                    return Err(CompileError::new(
+                        "GEN_002",
+                        format!("undefined variable '{}'", name),
+                        Some(*span),
+                    ));
                 }
             }
             Expr::Path(parts, span) => {
                 let full_name = parts.join("::");
-                return Err(format!("Direct path expression '{}' not allowed as value at {}:{}", full_name, span.line, span.col));
+                return Err(CompileError::new(
+                    "GEN_003",
+                    format!("path expression '{}' cannot be used as a value", full_name),
+                    Some(*span),
+                ));
             }
             Expr::Assign { target, value, span } => {
                 asm.push_str(&self.generate_expr(value)?);
                 match &**target {
-                    Expr::Ident(name, _) => {
+                    Expr::Ident(name, target_span) => {
                         if let Some(sym) = self.lookup_var(name) {
                             asm.push_str(&format!("    mov [ebp + ({})], eax\n", sym.offset));
                         } else {
-                            return Err(format!("Undefined assignment target '{}'", name));
+                            return Err(CompileError::new(
+                                "GEN_002",
+                                format!("undefined assignment target '{}'", name),
+                                Some(*target_span),
+                            ));
                         }
                     }
                     Expr::Unary(UnaryOp::Deref, ptr_expr, _) => {
@@ -245,7 +258,13 @@ impl<'a> X86GasCodegen<'a> {
                         asm.push_str("    pop eax\n");
                         asm.push_str("    mov [edx], eax\n");
                     }
-                    _ => return Err(format!("Invalid assignment target at {}:{}", span.line, span.col)),
+                    _ => {
+                        return Err(CompileError::new(
+                            "GEN_004",
+                            "invalid assignment target",
+                            Some(*span),
+                        ))
+                    }
                 }
             }
             Expr::Unary(op, inner, _) => {
@@ -331,22 +350,32 @@ impl<'a> X86GasCodegen<'a> {
                     }
                 }
             }
-            Expr::Call { callee, args, .. } => {
-                // Push arguments right-to-left
-                for arg in args.iter().rev() {
-                    asm.push_str(&self.generate_expr(arg)?);
-                    asm.push_str("    push eax\n");
-                }
-
+            Expr::Call { callee, args, span } => {
                 let target_label = match &**callee {
                     Expr::Ident(name, _) => name.clone(),
                     Expr::Path(parts, _) => parts.join("_"), // sys::write -> sys_write
-                    _ => return Err("Indirect function call not supported yet".into()),
+                    _ => {
+                        return Err(CompileError::new(
+                            "GEN_005",
+                            "function call target must be an identifier or a path",
+                            Some(*span),
+                        ))
+                    }
                 };
 
-                asm.push_str(&format!("    call {}\n", target_label));
-                if !args.is_empty() {
-                    asm.push_str(&format!("    add esp, {}\n", args.len() * 4));
+                if target_label == "str_len" {
+                    self.generate_str_len(&args[0], &mut asm)?;
+                } else {
+                    // Push arguments right-to-left
+                    for arg in args.iter().rev() {
+                        asm.push_str(&self.generate_expr(arg)?);
+                        asm.push_str("    push eax\n");
+                    }
+
+                    asm.push_str(&format!("    call {}\n", target_label));
+                    if !args.is_empty() {
+                        asm.push_str(&format!("    add esp, {}\n", args.len() * 4));
+                    }
                 }
             }
             Expr::Syscall { number, args, .. } => {
@@ -367,5 +396,17 @@ impl<'a> X86GasCodegen<'a> {
         }
 
         Ok(asm)
+    }
+
+    // Inline NUL-terminated string length; clobbers ebx/ecx (caller-saved in cdecl)
+    fn generate_str_len(&mut self, arg: &Expr, asm: &mut String) -> Result<(), CompileError> {
+        asm.push_str(&self.generate_expr(arg)?);
+        let loop_lbl = self.new_label("len");
+        let done_lbl = self.new_label("len_done");
+        asm.push_str(&format!(
+            "    mov ebx, eax\n    mov ecx, 0\n{}:\n    cmpb [ebx + ecx], 0\n    je {}\n    inc ecx\n    jmp {}\n{}:\n    mov eax, ecx\n",
+            loop_lbl, done_lbl, loop_lbl, done_lbl
+        ));
+        Ok(())
     }
 }
