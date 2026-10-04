@@ -56,6 +56,28 @@ NyxC adheres to standard 32-bit `cdecl` calling convention:
   ret
   ```
 
+## Diagnostics
+Every pipeline stage (lexer, parser, semantic analysis, codegen, driver)
+reports `CompileError { code, message, span }`. The CLI renders each error
+with a stable code, the source location, the offending line, and a caret:
+
+```text
+error[PAR_005]: expected an expression, found newline
+  --> main.nyx:3:9
+  |
+3 |     x +
+  |         ^
+```
+
+Codes are stable per category: `LEX_*` (lexer), `PAR_*` (parser),
+`SEM_*` (semantic analysis), `GEN_*` (codegen), `IO_*` (file access),
+`TOOL_*` (assembler/linker, with the tool's stderr included in the message).
+
+## Built-ins
+`str_len(s: *u8) -> i32` is registered in the semantic analyzer and expanded
+inline by the code generator as a NUL-scan loop (clobbers `ebx`/`ecx`,
+caller-saved in cdecl), so no extern symbol or runtime code is needed.
+
 ## Module Hierarchy
 - `src/token.rs`: Token definitions and source location spans.
 - `src/lexer.rs`: Lexical scanner with comment, escape, and newline handling.

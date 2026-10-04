@@ -38,6 +38,14 @@ let mut counter: i32 = 0
 const BUFFER_SIZE: i32 = 1024
 ```
 
+Type annotations are optional. When omitted, the type is inferred from the
+initializer (integers infer to `i32`, string literals to `*u8`):
+```nyx
+let a = 10
+let mut counter = 0
+const BUFFER_SIZE = 1024
+```
+
 ### External Declarations
 ```nyx
 extern fn sys_write(fd: i32, buf: *u8, len: i32) -> i32
@@ -68,7 +76,16 @@ while counter < 10 {
 - Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
 - Pointer operations: `&x` (address-of), `*ptr` (dereference)
 
-## 6. Built-in Syscall Intrinsic
+## 6. Built-in Functions
+Compiler built-ins, always available without an import:
+
+- `str_len(s: *u8) -> i32` — length of a NUL-terminated string, inlined at
+  the call site. Removes the need to count string lengths by hand:
+```nyx
+sys::write(1, "Hello from NyxC!\n", str_len("Hello from NyxC!\n"))
+```
+
+## 7. Built-in Syscall Intrinsic
 NyxC provides direct low-level hardware interrupt dispatch via `syscall`:
 ```nyx
 syscall(4, 1, msg, len) // eax=4 (SYS_WRITE), ebx=1, ecx=msg, edx=len
@@ -78,7 +95,18 @@ Or via standard library module `nyx/sys`:
 import "nyx/sys"
 
 fn main() -> i32 {
-    sys::write(1, "Hello from NyxC!\n", 17)
+    sys::write(1, "Hello from NyxC!\n", str_len("Hello from NyxC!\n"))
     return 0
 }
+```
+
+## 8. Diagnostics
+Compiler errors are structured (`error[CODE]`) and point at the offending
+source location with a caret:
+```text
+error[SEM_001]: cannot find value 'x' in this scope
+  --> main.nyx:4:13
+  |
+4 |     let a = x
+  |             ^
 ```
