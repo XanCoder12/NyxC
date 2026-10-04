@@ -1,8 +1,9 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use nyxc::driver::{CompileOptions, Driver};
+use nyxc::error::{render, CompileError};
 use nyxc::lexer::Lexer;
 use nyxc::parser::Parser;
 use nyxc::sema::SemanticAnalyzer;
@@ -21,6 +22,13 @@ fn print_help() {
     println!("  -k, --keep-temps                   Keep intermediate .s and .o files");
     println!("  -h, --help                         Show help information");
     println!("  -v, --version                      Show version");
+}
+
+fn print_compile_error(file: &Path, err: &CompileError) {
+    match std::fs::read_to_string(file) {
+        Ok(source) => eprint!("{}", render(&file.display().to_string(), &source, err)),
+        Err(_) => eprintln!("error[{}]: {}", err.code, err.message),
+    }
 }
 
 fn main() {
@@ -115,12 +123,13 @@ fn main() {
                 process::exit(1);
             }
         };
+        let file_display = input.display().to_string();
 
         let mut lexer = Lexer::new(&source);
         let tokens = match lexer.tokenize() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("Lexer error: {}", e);
+                eprint!("{}", render(&file_display, &source, &e));
                 process::exit(1);
             }
         };
@@ -129,14 +138,14 @@ fn main() {
         let program = match parser.parse_program() {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("Parser error: {}", e);
+                eprint!("{}", render(&file_display, &source, &e));
                 process::exit(1);
             }
         };
 
         let mut analyzer = SemanticAnalyzer::new();
         if let Err(e) = analyzer.analyze_program(&program) {
-            eprintln!("Type/Semantic error: {}", e);
+            eprint!("{}", render(&file_display, &source, &e));
             process::exit(1);
         }
 
@@ -144,6 +153,7 @@ fn main() {
         return;
     }
 
+    let input_for_err = input.clone();
     let options = CompileOptions {
         input_file: input,
         output_file,
@@ -157,7 +167,7 @@ fn main() {
             println!("Compiled successfully -> {:?}", out);
         }
         Err(e) => {
-            eprintln!("Compilation failed: {}", e);
+            print_compile_error(&input_for_err, &e);
             process::exit(1);
         }
     }
