@@ -2,6 +2,7 @@ pub mod symbols;
 pub mod types;
 
 use crate::ast::*;
+use crate::error::CompileError;
 use self::symbols::{FnSymbol, Symbol, SymbolTable};
 use self::types::is_assignable;
 
@@ -62,13 +63,21 @@ impl SemanticAnalyzer {
             is_extern: true,
         });
 
+        // Compiler built-in: length of a NUL-terminated string, inlined by codegen
+        symbols.register_fn(FnSymbol {
+            name: "str_len".into(),
+            param_types: vec![Type::Pointer(Box::new(Type::U8))],
+            ret_type: Type::I32,
+            is_extern: false,
+        });
+
         Self {
             symbols,
             has_sys_import: false,
         }
     }
 
-    pub fn analyze_program(&mut self, program: &Program) -> Result<(), String> {
+    pub fn analyze_program(&mut self, program: &Program) -> Result<(), CompileError> {
         // First pass: register imports and function signatures
         for item in &program.items {
             match item {
@@ -102,7 +111,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn analyze_fn(&mut self, def: &FnDef, body: &[Stmt]) -> Result<(), String> {
+    fn analyze_fn(&mut self, def: &FnDef, body: &[Stmt]) -> Result<(), CompileError> {
         self.symbols.enter_scope();
 
         // Register parameters with positive offsets: EBP + 8, EBP + 12, etc.
@@ -133,7 +142,7 @@ impl SemanticAnalyzer {
         fn_name: &str,
         expected_ret: &Type,
         local_offset: &mut i32,
-    ) -> Result<(), String> {
+    ) -> Result<(), CompileError> {
         match stmt {
             Stmt::Let { name, is_mut, ty, init, span } => {
                 let init_ty = if let Some(expr) = init {
@@ -145,9 +154,14 @@ impl SemanticAnalyzer {
                 let var_ty = match (ty, &init_ty) {
                     (Some(explicit_ty), Some(expr_ty)) => {
                         if !is_assignable(explicit_ty, expr_ty) {
-                            return Err(format!(
-                                "Type mismatch at {}:{}: cannot assign {:?} to {:?}",
-                                span.line, span.col, expr_ty, explicit_ty
+                            return Err(CompileError::new(
+                                "SEM_003",
+                                format!(
+                                    "type mismatch: cannot assign {} to {}",
+                                    expr_ty.name(),
+                                    explicit_ty.name()
+                                ),
+                                Some(*span),
                             ));
                         }
                         explicit_ty.clone()
@@ -155,9 +169,13 @@ impl SemanticAnalyzer {
                     (Some(explicit_ty), None) => explicit_ty.clone(),
                     (None, Some(expr_ty)) => expr_ty.clone(),
                     (None, None) => {
-                        return Err(format!(
-                            "Variable '{}' at {}:{} requires explicit type or initializer",
-                            name, span.line, span.col
+                        return Err(CompileError::new(
+                            "SEM_009",
+                            format!(
+                                "variable '{}' needs an explicit type or an initializer",
+                                name
+                            ),
+                            Some(*span),
                         ));
                     }
                 };
@@ -178,19 +196,31 @@ impl SemanticAnalyzer {
                 };
 
                 if !is_assignable(expected_ret, &val_ty) {
-                    return Err(format!(
-                        "Invalid return type at {}:{}: expected {:?}, got {:?}",
-                        span.line, span.col, expected_ret, val_ty
+                    return Err(CompileError::new(
+                        "SEM_005",
+                        format!(
+                            "invalid return type: expected {}, got {}",
+                            expected_ret.name(),
+                            val_ty.name()
+                        ),
+                        Some(*span),
                     ));
                 }
             }
             Stmt::Expr(expr, _) => {
                 self.type_of_expr(expr)?;
             }
-            Stmt::If { cond, then_branch, else_branch, .. } => {
+            Stmt::If { cond, then_branch, else_branch, span } => {
                 let cond_ty = self.type_of_expr(cond)?;
                 if !matches!(cond_ty, Type::Bool | Type::I32 | Type::U32 | Type::Pointer(_)) {
-                    return Err("If condition must evaluate to a boolean or integer".into());
+                    return Err(CompileError::new(
+                        "SEM_008",
+                        format!(
+                            "if condition must be a bool, integer, or pointer, found {}",
+                            cond_ty.name()
+                        ),
+                        Some(*span),
+                    ));
                 }
                 for s in then_branch {
                     self.analyze_stmt(s, fn_name, expected_ret, local_offset)?;
@@ -201,10 +231,17 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Stmt::While { cond, body, .. } => {
+            Stmt::While { cond, body, span } => {
                 let cond_ty = self.type_of_expr(cond)?;
                 if !matches!(cond_ty, Type::Bool | Type::I32 | Type::U32 | Type::Pointer(_)) {
-                    return Err("While condition must evaluate to a boolean or integer".into());
+                    return Err(CompileError::new(
+                        "SEM_008",
+                        format!(
+                            "while condition must be a bool, integer, or pointer, found {}",
+                            cond_ty.name()
+                        ),
+                        Some(*span),
+                    ));
                 }
                 for s in body {
                     self.analyze_stmt(s, fn_name, expected_ret, local_offset)?;
@@ -222,7 +259,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    pub fn type_of_expr(&self, expr: &Expr) -> Result<Type, String> {
+    pub fn type_of_expr(&self, expr: &Expr) -> Result<Type, CompileError> {
         match expr {
             Expr::IntLit(_, _) => Ok(Type::I32),
             Expr::StringLit(_, _) => Ok(Type::Pointer(Box::new(Type::U8))),
@@ -231,7 +268,11 @@ impl SemanticAnalyzer {
                 if let Some(sym) = self.symbols.lookup_var(name) {
                     Ok(sym.ty.clone())
                 } else {
-                    Err(format!("Undefined identifier '{}' at {}:{}", name, span.line, span.col))
+                    Err(CompileError::new(
+                        "SEM_001",
+                        format!("cannot find value '{}' in this scope", name),
+                        Some(*span),
+                    ))
                 }
             }
             Expr::Path(parts, span) => {
@@ -239,7 +280,11 @@ impl SemanticAnalyzer {
                 if let Some(fn_sym) = self.symbols.lookup_fn(&full_name) {
                     Ok(fn_sym.ret_type.clone())
                 } else {
-                    Err(format!("Undefined symbol '{}' at {}:{}", full_name, span.line, span.col))
+                    Err(CompileError::new(
+                        "SEM_002",
+                        format!("cannot find symbol '{}' in this scope", full_name),
+                        Some(*span),
+                    ))
                 }
             }
             Expr::Binary(op, left, right, span) => {
@@ -253,16 +298,21 @@ impl SemanticAnalyzer {
                     BinaryOp::And | BinaryOp::Or => Ok(Type::Bool),
                     _ => {
                         if !is_assignable(&lty, &rty) {
-                            return Err(format!(
-                                "Type mismatch in binary operation at {}:{}: {:?} and {:?}",
-                                span.line, span.col, lty, rty
+                            return Err(CompileError::new(
+                                "SEM_003",
+                                format!(
+                                    "type mismatch in binary operation: {} and {}",
+                                    lty.name(),
+                                    rty.name()
+                                ),
+                                Some(*span),
                             ));
                         }
                         Ok(lty)
                     }
                 }
             }
-            Expr::Unary(op, inner, _) => {
+            Expr::Unary(op, inner, span) => {
                 let ty = self.type_of_expr(inner)?;
                 match op {
                     UnaryOp::Neg | UnaryOp::BitNot => Ok(ty),
@@ -270,7 +320,11 @@ impl SemanticAnalyzer {
                     UnaryOp::AddrOf => Ok(Type::Pointer(Box::new(ty))),
                     UnaryOp::Deref => match ty {
                         Type::Pointer(inner_ty) => Ok(*inner_ty),
-                        _ => Err("Cannot dereference non-pointer type".into()),
+                        _ => Err(CompileError::new(
+                            "SEM_010",
+                            format!("cannot dereference a non-pointer value of type {}", ty.name()),
+                            Some(*span),
+                        )),
                     },
                 }
             }
@@ -278,32 +332,50 @@ impl SemanticAnalyzer {
                 let fn_name = match &**callee {
                     Expr::Ident(name, _) => name.clone(),
                     Expr::Path(parts, _) => parts.join("::"),
-                    _ => return Err(format!("Unsupported function call target at {}:{}", span.line, span.col)),
+                    _ => {
+                        return Err(CompileError::new(
+                            "SEM_011",
+                            "function call target must be an identifier or a path",
+                            Some(*span),
+                        ))
+                    }
                 };
 
                 if let Some(fn_sym) = self.symbols.lookup_fn(&fn_name) {
                     if fn_sym.param_types.len() != args.len() {
-                        return Err(format!(
-                            "Function '{}' expects {} arguments, but got {} at {}:{}",
-                            fn_name,
-                            fn_sym.param_types.len(),
-                            args.len(),
-                            span.line,
-                            span.col
+                        return Err(CompileError::new(
+                            "SEM_006",
+                            format!(
+                                "function '{}' takes {} arguments ({} provided)",
+                                fn_name,
+                                fn_sym.param_types.len(),
+                                args.len()
+                            ),
+                            Some(*span),
                         ));
                     }
                     for (arg, param_ty) in args.iter().zip(&fn_sym.param_types) {
                         let arg_ty = self.type_of_expr(arg)?;
                         if !is_assignable(param_ty, &arg_ty) {
-                            return Err(format!(
-                                "Argument type mismatch in call to '{}' at {}:{}: expected {:?}, got {:?}",
-                                fn_name, span.line, span.col, param_ty, arg_ty
+                            return Err(CompileError::new(
+                                "SEM_007",
+                                format!(
+                                    "argument type mismatch in call to '{}': expected {}, got {}",
+                                    fn_name,
+                                    param_ty.name(),
+                                    arg_ty.name()
+                                ),
+                                Some(*span),
                             ));
                         }
                     }
                     Ok(fn_sym.ret_type.clone())
                 } else {
-                    Err(format!("Undefined function '{}' at {}:{}", fn_name, span.line, span.col))
+                    Err(CompileError::new(
+                        "SEM_002",
+                        format!("cannot find function '{}' in this scope", fn_name),
+                        Some(*span),
+                    ))
                 }
             }
             Expr::Syscall { number, args, .. } => {
@@ -317,9 +389,14 @@ impl SemanticAnalyzer {
                 let target_ty = self.type_of_expr(target)?;
                 let val_ty = self.type_of_expr(value)?;
                 if !is_assignable(&target_ty, &val_ty) {
-                    return Err(format!(
-                        "Cannot assign type {:?} to {:?} at {}:{}",
-                        val_ty, target_ty, span.line, span.col
+                    return Err(CompileError::new(
+                        "SEM_012",
+                        format!(
+                            "cannot assign {} to {}",
+                            val_ty.name(),
+                            target_ty.name()
+                        ),
+                        Some(*span),
                     ));
                 }
                 Ok(target_ty)
