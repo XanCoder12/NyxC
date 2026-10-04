@@ -2,6 +2,6 @@
 import "nyx/sys"
 
 fn main() -> i32 {
-    sys::write(1, "Hello from NyxC on NyxaraOS!\n", 30)
+    sys::write(1, "Hello from NyxC on NyxaraOS!\n", str_len("Hello from NyxC on NyxaraOS!\n"))
     return 0
 }
