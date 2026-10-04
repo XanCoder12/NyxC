@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::error::CompileError;
 use crate::token::{Token, TokenKind};
 
 pub struct Parser {
@@ -37,15 +38,16 @@ impl Parser {
         }
     }
 
-    fn expect(&mut self, expected: TokenKind) -> Result<Token, String> {
+    fn expect(&mut self, expected: TokenKind) -> Result<Token, CompileError> {
         let tok = self.peek().clone();
         if std::mem::discriminant(&tok.kind) == std::mem::discriminant(&expected) {
             self.advance();
             Ok(tok)
         } else {
-            Err(format!(
-                "Parse error at {}:{}: expected {:?}, found {:?}",
-                tok.span.line, tok.span.col, expected, tok.kind
+            Err(CompileError::new(
+                "PAR_001",
+                format!("expected {}, found {}", expected.describe(), tok.kind.describe()),
+                Some(tok.span),
             ))
         }
     }
@@ -59,6 +61,21 @@ impl Parser {
         }
     }
 
+    fn parse_ident(&mut self, what: &str) -> Result<String, CompileError> {
+        match self.peek_kind() {
+            TokenKind::Ident(id) => {
+                let s = id.clone();
+                self.advance();
+                Ok(s)
+            }
+            _ => Err(CompileError::new(
+                "PAR_004",
+                format!("expected {}", what),
+                Some(self.peek().span),
+            )),
+        }
+    }
+
     fn consume_stmt_terminator(&mut self) {
         if matches!(self.peek_kind(), TokenKind::Semicolon) {
             self.advance();
@@ -66,7 +83,7 @@ impl Parser {
         self.skip_newlines();
     }
 
-    pub fn parse_program(&mut self) -> Result<Program, String> {
+    pub fn parse_program(&mut self) -> Result<Program, CompileError> {
         let mut items = Vec::new();
         self.skip_newlines();
 
@@ -78,7 +95,7 @@ impl Parser {
         Ok(Program { items })
     }
 
-    fn parse_item(&mut self) -> Result<Item, String> {
+    fn parse_item(&mut self) -> Result<Item, CompileError> {
         self.skip_newlines();
         match self.peek_kind() {
             TokenKind::Import => self.parse_import().map(Item::Import),
@@ -88,16 +105,18 @@ impl Parser {
                 self.parse_fn(true).map(Item::Fn)
             }
             TokenKind::Const => self.parse_const().map(Item::Const),
-            _ => Err(format!(
-                "Unexpected token at {}:{}: expected item, found {:?}",
-                self.peek().span.line,
-                self.peek().span.col,
-                self.peek().kind
+            _ => Err(CompileError::new(
+                "PAR_002",
+                format!(
+                    "expected an item (fn, const, or import), found {}",
+                    self.peek_kind().describe()
+                ),
+                Some(self.peek().span),
             )),
         }
     }
 
-    fn parse_import(&mut self) -> Result<Import, String> {
+    fn parse_import(&mut self) -> Result<Import, CompileError> {
         let start = self.expect(TokenKind::Import)?.span;
         let path = match self.peek_kind() {
             TokenKind::StringLit(s) => {
@@ -105,47 +124,36 @@ impl Parser {
                 self.advance();
                 s
             }
-            _ => return Err(format!("Expected import path string at {}:{}", self.peek().span.line, self.peek().span.col)),
+            _ => {
+                return Err(CompileError::new(
+                    "PAR_001",
+                    format!(
+                        "expected an import path string, found {}",
+                        self.peek_kind().describe()
+                    ),
+                    Some(self.peek().span),
+                ))
+            }
         };
 
         let mut alias = None;
         if self.match_token(TokenKind::Ident("as".into())) {
-            match self.peek_kind() {
-                TokenKind::Ident(id) => {
-                    alias = Some(id.clone());
-                    self.advance();
-                }
-                _ => return Err("Expected alias identifier after 'as'".into()),
-            }
+            alias = Some(self.parse_ident("an alias identifier after 'as'")?);
         }
 
         self.consume_stmt_terminator();
         Ok(Import { path, alias, span: start })
     }
 
-    fn parse_fn(&mut self, is_extern: bool) -> Result<FnDef, String> {
+    fn parse_fn(&mut self, is_extern: bool) -> Result<FnDef, CompileError> {
         let start = self.expect(TokenKind::Fn)?.span;
-        let name = match self.peek_kind() {
-            TokenKind::Ident(id) => {
-                let s = id.clone();
-                self.advance();
-                s
-            }
-            _ => return Err(format!("Expected function name at {}:{}", self.peek().span.line, self.peek().span.col)),
-        };
+        let name = self.parse_ident("a function name")?;
 
         self.expect(TokenKind::LParen)?;
         let mut params = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
             let p_span = self.peek().span;
-            let p_name = match self.peek_kind() {
-                TokenKind::Ident(id) => {
-                    let s = id.clone();
-                    self.advance();
-                    s
-                }
-                _ => return Err(format!("Expected parameter name at {}:{}", p_span.line, p_span.col)),
-            };
+            let p_name = self.parse_ident("a parameter name")?;
             self.expect(TokenKind::Colon)?;
             let ty = self.parse_type()?;
             params.push(Param { name: p_name, ty, span: p_span });
@@ -182,7 +190,7 @@ impl Parser {
         })
     }
 
-    fn parse_type(&mut self) -> Result<Type, String> {
+    fn parse_type(&mut self) -> Result<Type, CompileError> {
         if self.match_token(TokenKind::Star) {
             let inner = self.parse_type()?;
             return Ok(Type::Pointer(Box::new(inner)));
@@ -198,25 +206,22 @@ impl Parser {
             TokenKind::TypeU32 => Ok(Type::U32),
             TokenKind::TypeBool => Ok(Type::Bool),
             TokenKind::TypeVoid => Ok(Type::Void),
-            _ => Err(format!(
-                "Expected type at {}:{}, found {:?}",
-                tok.span.line, tok.span.col, tok.kind
+            _ => Err(CompileError::new(
+                "PAR_003",
+                format!("expected a type, found {}", tok.kind.describe()),
+                Some(tok.span),
             )),
         }
     }
 
-    fn parse_const(&mut self) -> Result<Stmt, String> {
+    fn parse_const(&mut self) -> Result<Stmt, CompileError> {
         let start = self.expect(TokenKind::Const)?.span;
-        let name = match self.peek_kind() {
-            TokenKind::Ident(id) => {
-                let s = id.clone();
-                self.advance();
-                s
-            }
-            _ => return Err(format!("Expected constant name at {}:{}", self.peek().span.line, self.peek().span.col)),
+        let name = self.parse_ident("a constant name")?;
+        let ty = if self.match_token(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
         };
-        self.expect(TokenKind::Colon)?;
-        let ty = self.parse_type()?;
         self.expect(TokenKind::Eq)?;
         let init = self.parse_expr()?;
         self.consume_stmt_terminator();
@@ -224,7 +229,7 @@ impl Parser {
         Ok(Stmt::Const { name, ty, init, span: start })
     }
 
-    fn parse_block_stmts(&mut self) -> Result<Vec<Stmt>, String> {
+    fn parse_block_stmts(&mut self) -> Result<Vec<Stmt>, CompileError> {
         let mut stmts = Vec::new();
         self.skip_newlines();
 
@@ -236,7 +241,7 @@ impl Parser {
         Ok(stmts)
     }
 
-    fn parse_stmt(&mut self) -> Result<Stmt, String> {
+    fn parse_stmt(&mut self) -> Result<Stmt, CompileError> {
         self.skip_newlines();
         match self.peek_kind() {
             TokenKind::Let => self.parse_let(),
@@ -258,17 +263,10 @@ impl Parser {
         }
     }
 
-    fn parse_let(&mut self) -> Result<Stmt, String> {
+    fn parse_let(&mut self) -> Result<Stmt, CompileError> {
         let start = self.expect(TokenKind::Let)?.span;
         let is_mut = self.match_token(TokenKind::Mut);
-        let name = match self.peek_kind() {
-            TokenKind::Ident(id) => {
-                let s = id.clone();
-                self.advance();
-                s
-            }
-            _ => return Err(format!("Expected identifier after let at {}:{}", self.peek().span.line, self.peek().span.col)),
-        };
+        let name = self.parse_ident("an identifier after 'let'")?;
 
         let mut ty = None;
         if self.match_token(TokenKind::Colon) {
@@ -284,7 +282,7 @@ impl Parser {
         Ok(Stmt::Let { name, is_mut, ty, init, span: start })
     }
 
-    fn parse_return(&mut self) -> Result<Stmt, String> {
+    fn parse_return(&mut self) -> Result<Stmt, CompileError> {
         let start = self.expect(TokenKind::Return)?.span;
         let value = if matches!(self.peek_kind(), TokenKind::Semicolon | TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof) {
             None
@@ -296,7 +294,7 @@ impl Parser {
         Ok(Stmt::Return { value, span: start })
     }
 
-    fn parse_if(&mut self) -> Result<Stmt, String> {
+    fn parse_if(&mut self) -> Result<Stmt, CompileError> {
         let start = self.expect(TokenKind::If)?.span;
         let has_paren = self.match_token(TokenKind::LParen);
         let cond = self.parse_expr()?;
@@ -327,7 +325,7 @@ impl Parser {
         Ok(Stmt::If { cond, then_branch, else_branch, span: start })
     }
 
-    fn parse_while(&mut self) -> Result<Stmt, String> {
+    fn parse_while(&mut self) -> Result<Stmt, CompileError> {
         let start = self.expect(TokenKind::While)?.span;
         let has_paren = self.match_token(TokenKind::LParen);
         let cond = self.parse_expr()?;
@@ -343,11 +341,11 @@ impl Parser {
         Ok(Stmt::While { cond, body, span: start })
     }
 
-    pub fn parse_expr(&mut self) -> Result<Expr, String> {
+    pub fn parse_expr(&mut self) -> Result<Expr, CompileError> {
         self.parse_assignment()
     }
 
-    fn parse_assignment(&mut self) -> Result<Expr, String> {
+    fn parse_assignment(&mut self) -> Result<Expr, CompileError> {
         let expr = self.parse_logical_or()?;
         if self.match_token(TokenKind::Eq) {
             let val = self.parse_assignment()?;
@@ -361,7 +359,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_logical_or(&mut self) -> Result<Expr, String> {
+    fn parse_logical_or(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_logical_and()?;
         while self.match_token(TokenKind::PipePipe) {
             let span = left.span();
@@ -371,7 +369,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_logical_and(&mut self) -> Result<Expr, String> {
+    fn parse_logical_and(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_bitwise_or()?;
         while self.match_token(TokenKind::AmpAmp) {
             let span = left.span();
@@ -381,7 +379,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_bitwise_or(&mut self) -> Result<Expr, String> {
+    fn parse_bitwise_or(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_bitwise_xor()?;
         while self.match_token(TokenKind::Pipe) {
             let span = left.span();
@@ -391,7 +389,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_bitwise_xor(&mut self) -> Result<Expr, String> {
+    fn parse_bitwise_xor(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_bitwise_and()?;
         while self.match_token(TokenKind::Caret) {
             let span = left.span();
@@ -401,7 +399,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_bitwise_and(&mut self) -> Result<Expr, String> {
+    fn parse_bitwise_and(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_equality()?;
         while self.match_token(TokenKind::Amp) {
             let span = left.span();
@@ -411,7 +409,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_equality(&mut self) -> Result<Expr, String> {
+    fn parse_equality(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_relational()?;
         while matches!(self.peek_kind(), TokenKind::EqEq | TokenKind::NotEq) {
             let is_eq = matches!(self.peek_kind(), TokenKind::EqEq);
@@ -424,7 +422,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_relational(&mut self) -> Result<Expr, String> {
+    fn parse_relational(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_shift()?;
         while matches!(self.peek_kind(), TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq) {
             let op = match self.peek_kind() {
@@ -442,7 +440,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_shift(&mut self) -> Result<Expr, String> {
+    fn parse_shift(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_additive()?;
         while matches!(self.peek_kind(), TokenKind::Shl | TokenKind::Shr) {
             let is_shl = matches!(self.peek_kind(), TokenKind::Shl);
@@ -455,7 +453,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_additive(&mut self) -> Result<Expr, String> {
+    fn parse_additive(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_multiplicative()?;
         while matches!(self.peek_kind(), TokenKind::Plus | TokenKind::Minus) {
             let is_plus = matches!(self.peek_kind(), TokenKind::Plus);
@@ -468,7 +466,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_multiplicative(&mut self) -> Result<Expr, String> {
+    fn parse_multiplicative(&mut self) -> Result<Expr, CompileError> {
         let mut left = self.parse_unary()?;
         while matches!(self.peek_kind(), TokenKind::Star | TokenKind::Slash | TokenKind::Percent) {
             let op = match self.peek_kind() {
@@ -485,7 +483,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_unary(&mut self) -> Result<Expr, String> {
+    fn parse_unary(&mut self) -> Result<Expr, CompileError> {
         let span = self.peek().span;
         match self.peek_kind() {
             TokenKind::Minus => {
@@ -517,7 +515,7 @@ impl Parser {
         }
     }
 
-    fn parse_postfix(&mut self) -> Result<Expr, String> {
+    fn parse_postfix(&mut self) -> Result<Expr, CompileError> {
         let mut expr = self.parse_primary()?;
 
         loop {
@@ -544,7 +542,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_primary(&mut self) -> Result<Expr, String> {
+    fn parse_primary(&mut self) -> Result<Expr, CompileError> {
         let tok = self.advance();
         match tok.kind {
             TokenKind::IntLit(n) => Ok(Expr::IntLit(n, tok.span)),
@@ -568,15 +566,8 @@ impl Parser {
             TokenKind::Ident(id) => {
                 if self.match_token(TokenKind::PathSep) {
                     let mut path = vec![id];
-                    match self.peek_kind() {
-                        TokenKind::Ident(next_id) => {
-                            let s = next_id.clone();
-                            self.advance();
-                            path.push(s);
-                            Ok(Expr::Path(path, tok.span))
-                        }
-                        _ => Err(format!("Expected identifier after '::' at {}:{}", self.peek().span.line, self.peek().span.col)),
-                    }
+                    path.push(self.parse_ident("an identifier after '::'")?);
+                    Ok(Expr::Path(path, tok.span))
                 } else {
                     Ok(Expr::Ident(id, tok.span))
                 }
@@ -586,9 +577,10 @@ impl Parser {
                 self.expect(TokenKind::RParen)?;
                 Ok(inner)
             }
-            _ => Err(format!(
-                "Unexpected token in expression at {}:{}: {:?}",
-                tok.span.line, tok.span.col, tok.kind
+            _ => Err(CompileError::new(
+                "PAR_005",
+                format!("expected an expression, found {}", tok.kind.describe()),
+                Some(tok.span),
             )),
         }
     }
