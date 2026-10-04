@@ -1,3 +1,4 @@
+use crate::error::CompileError;
 use crate::token::{Span, Token, TokenKind};
 
 pub struct Lexer<'a> {
@@ -37,7 +38,7 @@ impl<'a> Lexer<'a> {
         Some(ch)
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
+    pub fn tokenize(&mut self) -> Result<Vec<Token>, CompileError> {
         let mut tokens: Vec<Token> = Vec::new();
 
         while let Some(ch) = self.peek() {
@@ -80,7 +81,11 @@ impl<'a> Lexer<'a> {
                             self.advance();
                         }
                         if !closed {
-                            return Err(format!("Unterminated comment at line {}", span.line));
+                            return Err(CompileError::new(
+                                "LEX_003",
+                                "unterminated block comment",
+                                Some(span),
+                            ));
                         }
                     } else {
                         self.advance();
@@ -220,9 +225,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 _ => {
-                    return Err(format!(
-                        "Unexpected character '{}' at {}:{}",
-                        ch as char, self.line, self.col
+                    return Err(CompileError::new(
+                        "LEX_001",
+                        format!("unexpected character '{}'", ch as char),
+                        Some(Span::new(self.line, self.col)),
                     ));
                 }
             }
@@ -245,7 +251,7 @@ impl<'a> Lexer<'a> {
         s
     }
 
-    fn lex_number(&mut self, span: Span) -> Result<i64, String> {
+    fn lex_number(&mut self, span: Span) -> Result<i64, CompileError> {
         let mut s = String::new();
         if self.peek() == Some(b'0') {
             if let Some(next) = self.peek_next() {
@@ -260,8 +266,9 @@ impl<'a> Lexer<'a> {
                             break;
                         }
                     }
-                    return i64::from_str_radix(&s, 16)
-                        .map_err(|e| format!("Invalid hex literal at {}:{}: {}", span.line, span.col, e));
+                    return i64::from_str_radix(&s, 16).map_err(|_| {
+                        CompileError::new("LEX_004", "invalid hex literal", Some(span))
+                    });
                 } else if next == b'b' || next == b'B' {
                     self.advance(); // 0
                     self.advance(); // b
@@ -273,8 +280,9 @@ impl<'a> Lexer<'a> {
                             break;
                         }
                     }
-                    return i64::from_str_radix(&s, 2)
-                        .map_err(|e| format!("Invalid binary literal at {}:{}: {}", span.line, span.col, e));
+                    return i64::from_str_radix(&s, 2).map_err(|_| {
+                        CompileError::new("LEX_004", "invalid binary literal", Some(span))
+                    });
                 }
             }
         }
@@ -288,10 +296,10 @@ impl<'a> Lexer<'a> {
             }
         }
         s.parse::<i64>()
-            .map_err(|e| format!("Invalid integer literal at {}:{}: {}", span.line, span.col, e))
+            .map_err(|_| CompileError::new("LEX_004", "invalid integer literal", Some(span)))
     }
 
-    fn lex_string(&mut self, span: Span) -> Result<String, String> {
+    fn lex_string(&mut self, span: Span) -> Result<String, CompileError> {
         self.advance(); // consume opening '"'
         let mut s = String::new();
         while let Some(ch) = self.peek() {
@@ -302,7 +310,7 @@ impl<'a> Lexer<'a> {
             if ch == b'\\' {
                 self.advance();
                 let esc = self.advance().ok_or_else(|| {
-                    format!("Unterminated escape sequence at {}:{}", span.line, span.col)
+                    CompileError::new("LEX_005", "unterminated escape sequence", Some(span))
                 })?;
                 match esc {
                     b'n' => s.push('\n'),
@@ -318,17 +326,21 @@ impl<'a> Lexer<'a> {
                 self.advance();
             }
         }
-        Err(format!("Unterminated string literal starting at {}:{}", span.line, span.col))
+        Err(CompileError::new(
+            "LEX_002",
+            "unterminated string literal",
+            Some(span),
+        ))
     }
 
-    fn lex_char(&mut self, span: Span) -> Result<u8, String> {
+    fn lex_char(&mut self, span: Span) -> Result<u8, CompileError> {
         self.advance(); // consume opening '\''
         let ch = self.advance().ok_or_else(|| {
-            format!("Empty character literal at {}:{}", span.line, span.col)
+            CompileError::new("LEX_006", "empty character literal", Some(span))
         })?;
         let res = if ch == b'\\' {
             let esc = self.advance().ok_or_else(|| {
-                format!("Unterminated escape sequence at {}:{}", span.line, span.col)
+                CompileError::new("LEX_005", "unterminated escape sequence", Some(span))
             })?;
             match esc {
                 b'n' => b'\n',
@@ -343,7 +355,7 @@ impl<'a> Lexer<'a> {
             ch
         };
         if self.advance() != Some(b'\'') {
-            return Err(format!("Unclosed character literal at {}:{}", span.line, span.col));
+            return Err(CompileError::new("LEX_006", "unclosed character literal", Some(span)));
         }
         Ok(res)
     }
