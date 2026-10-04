@@ -1,17 +1,18 @@
 // 02_variabel.nyx
 // Belajar deklarasi variabel dan konstanta
+// Type bisa ditulis eksplisit (x: i32) atau di-infer dari nilai (x = 42)
 import "nyx/sys"
 
-const MAX: i32 = 100
+const MAX = 100
 
 fn main() -> i32 {
-    let x: i32 = 42
-    let mut y: i32 = 10
+    let x = 42
+    let mut y = 10
 
     // variabel mutable bisa diubah nilainya
     y = y + x
 
     // cetak pesan berhasil
-    sys::write(1, "Variabel OK!\n", 13)
+    sys::write(1, "Variabel OK!\n", str_len("Variabel OK!\n"))
     return 0
 }
