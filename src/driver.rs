@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::codegen::generate_x86_assembly;
+use crate::error::CompileError;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::sema::SemanticAnalyzer;
@@ -19,9 +20,14 @@ pub struct CompileOptions {
 pub struct Driver;
 
 impl Driver {
-    pub fn compile(options: CompileOptions) -> Result<PathBuf, String> {
-        let source = fs::read_to_string(&options.input_file)
-            .map_err(|e| format!("Failed to read input file {:?}: {}", options.input_file, e))?;
+    pub fn compile(options: CompileOptions) -> Result<PathBuf, CompileError> {
+        let source = fs::read_to_string(&options.input_file).map_err(|e| {
+            CompileError::new(
+                "IO_001",
+                format!("failed to read input file {}: {}", options.input_file.display(), e),
+                None,
+            )
+        })?;
 
         // 1. Lexer
         let mut lexer = Lexer::new(&source);
@@ -50,8 +56,13 @@ impl Driver {
             .unwrap_or_else(|| Path::new("."));
 
         let asm_path = parent_dir.join(format!("{}.s", stem));
-        fs::write(&asm_path, &asm_code)
-            .map_err(|e| format!("Failed to write assembly output {:?}: {}", asm_path, e))?;
+        fs::write(&asm_path, &asm_code).map_err(|e| {
+            CompileError::new(
+                "IO_002",
+                format!("failed to write assembly output {}: {}", asm_path.display(), e),
+                None,
+            )
+        })?;
 
         if options.emit_asm {
             return Ok(asm_path);
@@ -59,16 +70,25 @@ impl Driver {
 
         // 5. Assemble via `as --32`
         let obj_path = parent_dir.join(format!("{}.o", stem));
-        let as_status = Command::new("as")
+        let as_output = Command::new("as")
             .arg("--32")
             .arg(&asm_path)
             .arg("-o")
             .arg(&obj_path)
-            .status()
-            .map_err(|e| format!("Failed to execute 'as --32': {}", e))?;
+            .output()
+            .map_err(|e| {
+                CompileError::new("TOOL_001", format!("failed to execute 'as --32': {}", e), None)
+            })?;
 
-        if !as_status.success() {
-            return Err("Assembler (as --32) reported errors".into());
+        if !as_output.status.success() {
+            return Err(CompileError::new(
+                "TOOL_001",
+                format!(
+                    "assembler (as --32) failed:\n{}",
+                    String::from_utf8_lossy(&as_output.stderr)
+                ),
+                None,
+            ));
         }
 
         // 6. Link via `ld -m elf_i386`
@@ -84,24 +104,38 @@ impl Driver {
         let ld_script_content = include_str!("../runtime/user.ld");
         let temp_ld = parent_dir.join(".temp_user.ld");
         if options.target.os == TargetOs::Nyxara {
-            fs::write(&temp_ld, ld_script_content)
-                .map_err(|e| format!("Failed to write temporary linker script: {}", e))?;
+            fs::write(&temp_ld, ld_script_content).map_err(|e| {
+                CompileError::new(
+                    "IO_002",
+                    format!("failed to write temporary linker script: {}", e),
+                    None,
+                )
+            })?;
             ld_cmd.arg("-T").arg(&temp_ld);
         }
 
         ld_cmd.arg("-o").arg(&out_elf);
         ld_cmd.arg(&obj_path);
 
-        let ld_status = ld_cmd
-            .status()
-            .map_err(|e| format!("Failed to execute 'ld -m elf_i386': {}", e))?;
+        let ld_output = ld_cmd
+            .output()
+            .map_err(|e| {
+                CompileError::new("TOOL_002", format!("failed to execute 'ld -m elf_i386': {}", e), None)
+            })?;
 
         if temp_ld.exists() {
             let _ = fs::remove_file(temp_ld);
         }
 
-        if !ld_status.success() {
-            return Err("Linker (ld -m elf_i386) reported errors".into());
+        if !ld_output.status.success() {
+            return Err(CompileError::new(
+                "TOOL_002",
+                format!(
+                    "linker (ld -m elf_i386) failed:\n{}",
+                    String::from_utf8_lossy(&ld_output.stderr)
+                ),
+                None,
+            ));
         }
 
         if !options.keep_intermediates {
