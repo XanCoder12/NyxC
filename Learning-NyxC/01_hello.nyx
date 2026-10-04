@@ -1,8 +1,10 @@
 // 01_hello.nyx
 // Program paling sederhana: cetak teks ke layar
+// str_len() menghitung panjang string otomatis, tidak perlu menghitung manual
 import "nyx/sys"
 
 fn main() -> i32 {
-    sys::write(1, "Halo Dunia!\n", 12)
+    sys::write(1, "Halo Dunia!\n", str_len("Halo Dunia!\n"))
+    sys::write(1, "Saya Akram!\n", str_len("Saya Akram!\n"))
     return 0
 }
