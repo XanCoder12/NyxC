@@ -20,3 +20,6 @@ extern fn sys_getpid() -> i32
 
 // Compiler built-ins (always available, no import needed):
 //   str_len(s: *u8) -> i32   length of a NUL-terminated string
+//   print(s: *u8)            write string to stdout
+//   println(s: *u8)          write string to stdout followed by a newline
+//   itoa(n: i32) -> *u8      convert integer to NUL-terminated decimal string
