@@ -8,6 +8,8 @@ pub struct X86GasCodegen<'a> {
     label_counter: usize,
     current_fn_end_label: Option<String>,
     current_fn_name: Option<String>,
+    has_itoa: bool,
+    has_println: bool,
 }
 
 impl<'a> X86GasCodegen<'a> {
@@ -18,6 +20,8 @@ impl<'a> X86GasCodegen<'a> {
             label_counter: 0,
             current_fn_end_label: None,
             current_fn_name: None,
+            has_itoa: false,
+            has_println: false,
         }
     }
 
@@ -80,12 +84,69 @@ impl<'a> X86GasCodegen<'a> {
             output.push('\n');
         }
 
+        // Writable data section for the itoa result buffer and println newline
+        if self.has_itoa || self.has_println {
+            output.push_str(".section .data\n");
+            if self.has_itoa {
+                output.push_str(".nyx_itoa_buf:\n");
+                output.push_str("    .space 13\n");
+            }
+            if self.has_println {
+                output.push_str(".nyx_newline:\n");
+                output.push_str("    .byte 10\n");
+            }
+            output.push('\n');
+        }
+
         // Code section
         output.push_str(".section .text\n");
         output.push_str(&crate::codegen::runtime::generate_runtime_glue(has_main, has_start));
         output.push_str(&text_section);
 
+        if self.has_itoa {
+            output.push_str(Self::itoa_routine());
+        }
+
         Ok(output)
+    }
+
+    fn itoa_routine() -> &'static str {
+        // arg n in [esp+4]; result pointer in eax; clobbers eax/edx only
+        "
+.nyx_itoa:
+    push ebx
+    push esi
+    push edi
+    lea esi, [.nyx_itoa_buf]
+    add esi, 12
+    movb [esi], 0
+    mov ebx, [esp + 16]
+    mov ecx, 0
+    test ebx, ebx
+    jns .nyx_itoa_abs
+    mov ecx, -1
+    neg ebx
+.nyx_itoa_abs:
+.nyx_itoa_digit:
+    mov edx, 0
+    mov eax, 10
+    idiv eax
+    add dl, 48
+    dec esi
+    movb [esi], dl
+    test ebx, ebx
+    jnz .nyx_itoa_digit
+    test ecx, ecx
+    je .nyx_itoa_done
+    dec esi
+    movb [esi], 45
+.nyx_itoa_done:
+    mov eax, esi
+    pop edi
+    pop esi
+    pop ebx
+    ret
+"
     }
 
     fn format_asm_string(&self, s: &str) -> String {
@@ -365,6 +426,19 @@ impl<'a> X86GasCodegen<'a> {
 
                 if target_label == "str_len" {
                     self.generate_str_len(&args[0], &mut asm)?;
+                } else if target_label == "print" {
+                    self.generate_print(&args[0], false, &mut asm)?;
+                } else if target_label == "println" {
+                    self.has_println = true;
+                    self.generate_print(&args[0], true, &mut asm)?;
+                } else if target_label == "itoa" {
+                    self.has_itoa = true;
+                    for arg in args.iter().rev() {
+                        asm.push_str(&self.generate_expr(arg)?);
+                        asm.push_str("    push eax\n");
+                    }
+                    asm.push_str("    call .nyx_itoa\n");
+                    asm.push_str(&format!("    add esp, {}\n", args.len() * 4));
                 } else {
                     // Push arguments right-to-left
                     for arg in args.iter().rev() {
@@ -407,6 +481,38 @@ impl<'a> X86GasCodegen<'a> {
             "    mov ebx, eax\n    mov ecx, 0\n{}:\n    cmpb [ebx + ecx], 0\n    je {}\n    inc ecx\n    jmp {}\n{}:\n    mov eax, ecx\n",
             loop_lbl, done_lbl, loop_lbl, done_lbl
         ));
+        Ok(())
+    }
+
+    // Inline sys_write(1, s, str_len(s)); if newline=true, also writes the newline byte.
+    // Clobbers eax/ebx/ecx/edx (all caller-saved in cdecl).
+    fn generate_print(&mut self, arg: &Expr, newline: bool, asm: &mut String) -> Result<(), CompileError> {
+        // Evaluate arg -> eax (pointer to string)
+        asm.push_str(&self.generate_expr(arg)?);
+        // Save pointer: ebx = s
+        asm.push_str("    mov ebx, eax\n");
+        // Inline str_len: ecx = length
+        let loop_lbl = self.new_label("print_len");
+        let done_lbl = self.new_label("print_len_done");
+        asm.push_str(&format!(
+            "    mov ecx, 0\n{}:\n    cmpb [ebx + ecx], 0\n    je {}\n    inc ecx\n    jmp {}\n{}:\n",
+            loop_lbl, done_lbl, loop_lbl, done_lbl
+        ));
+        // sys_write(1, s, len): eax=4, ebx=1(fd), ecx=ptr, edx=len
+        // We have: ebx=ptr, ecx=len — shuffle into ABI registers
+        asm.push_str("    mov edx, ecx\n"); // edx = len
+        asm.push_str("    mov ecx, ebx\n"); // ecx = ptr
+        asm.push_str("    mov ebx, 1\n");   // ebx = stdout
+        asm.push_str("    mov eax, 4\n");   // eax = SYS_WRITE
+        asm.push_str("    int 0x80\n");
+        if newline {
+            // sys_write(1, &newline_byte, 1)
+            asm.push_str("    lea ecx, [.nyx_newline]\n");
+            asm.push_str("    mov ebx, 1\n");
+            asm.push_str("    mov edx, 1\n");
+            asm.push_str("    mov eax, 4\n");
+            asm.push_str("    int 0x80\n");
+        }
         Ok(())
     }
 }
