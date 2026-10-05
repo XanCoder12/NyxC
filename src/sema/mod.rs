@@ -63,11 +63,29 @@ impl SemanticAnalyzer {
             is_extern: true,
         });
 
-        // Compiler built-in: length of a NUL-terminated string, inlined by codegen
+        // Compiler built-ins, inlined by codegen
         symbols.register_fn(FnSymbol {
             name: "str_len".into(),
             param_types: vec![Type::Pointer(Box::new(Type::U8))],
             ret_type: Type::I32,
+            is_extern: false,
+        });
+        symbols.register_fn(FnSymbol {
+            name: "itoa".into(),
+            param_types: vec![Type::I32],
+            ret_type: Type::Pointer(Box::new(Type::U8)),
+            is_extern: false,
+        });
+        symbols.register_fn(FnSymbol {
+            name: "print".into(),
+            param_types: vec![Type::Pointer(Box::new(Type::U8))],
+            ret_type: Type::Void,
+            is_extern: false,
+        });
+        symbols.register_fn(FnSymbol {
+            name: "println".into(),
+            param_types: vec![Type::Pointer(Box::new(Type::U8))],
+            ret_type: Type::Void,
             is_extern: false,
         });
 
