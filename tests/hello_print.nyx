@@ -1,0 +1,6 @@
+fn main() -> i32 {
+    println("Hello, NyxaraOS!")
+    print("Version: ")
+    println("1.0")
+    0
+}
