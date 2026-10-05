@@ -1,16 +1,33 @@
 // 05_while.nyx
 // Belajar perulangan while
+//
+// sys::write butuh 3 argumen: (fd, buffer *u8, panjang)
+// Tidak bisa menulis angka i32 langsung, jadi digit diubah ke ASCII ('0' = 48)
 import "nyx/sys"
 
 fn main() -> i32 {
-    let mut i: i32 = 0
+    let mut i: i32 = 1
 
-    // cetak "Loop!\n" sebanyak 5 kali
-    while i < 5 {
-        sys::write(1, "Loop!\n", 6)
+    // cetak angka 1-101
+    while i <= 101 {
+        if i >= 100 {
+            let mut ratus: i32 = (i / 100) + 48
+            sys::write(1, &ratus, 1)
+        }
+
+        if i >= 10 {
+            let mut puluh: i32 = ((i / 10) % 10) + 48
+            sys::write(1, &puluh, 1)
+        }
+
+        let mut satuan: i32 = (i % 10) + 48
+        sys::write(1, &satuan, 1)
+
+        let mut nl: i32 = 10
+        sys::write(1, &nl, 1)
+
         i = i + 1
     }
 
-    sys::write(1, "Selesai.\n", 9)
     return 0
 }
