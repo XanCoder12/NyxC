@@ -143,6 +143,16 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    For {
+        init: Box<Stmt>,
+        cond: Expr,
+        step: Box<Expr>,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    /// Internal wrappers for `for` loop initialization.
+    LetWrapper(Box<Stmt>),
+    ExprInit(Box<Expr>, Span),
     Block(Vec<Stmt>, Span),
 }
 
@@ -160,6 +170,8 @@ pub struct FnDef {
     pub ret_ty: Type,
     pub body: Option<Vec<Stmt>>,
     pub is_extern: bool,
+    /// Stack space needed for local variables (computed by sema).
+    pub stack_size: i32,
     pub span: Span,
 }
 
