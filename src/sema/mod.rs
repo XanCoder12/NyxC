@@ -3,6 +3,7 @@ pub mod types;
 
 use crate::ast::*;
 use crate::error::CompileError;
+use crate::token::Span;
 use self::symbols::{FnSymbol, Symbol, SymbolTable};
 use self::types::is_assignable;
 
@@ -95,8 +96,8 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn analyze_program(&mut self, program: &Program) -> Result<(), CompileError> {
-        // First pass: register imports and function signatures
+    pub fn analyze_program(&mut self, program: &mut Program) -> Result<(), CompileError> {
+        // First pass: register imports, function signatures, and top-level constants
         for item in &program.items {
             match item {
                 Item::Import(imp) => {
@@ -113,23 +114,205 @@ impl SemanticAnalyzer {
                     };
                     self.symbols.register_fn(fn_sym);
                 }
+                Item::Const(Stmt::Const { name, ty, init, span }) => {
+                    self.analyze_const(name, ty.as_ref(), init, *span)?;
+                }
                 Item::Const(_) => {}
             }
         }
 
-        // Second pass: analyze function bodies
-        for item in &program.items {
-            if let Item::Fn(f) = item {
-                if let Some(body) = &f.body {
-                    self.analyze_fn(f, body)?;
+        // Second pass: analyze function bodies (collect fn data first to avoid borrow conflicts)
+        let fn_bodies: Vec<(usize, Vec<Stmt>)> = program
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| {
+                if let Item::Fn(f) = item {
+                    f.body.as_ref().map(|body| (i, body.clone()))
+                } else {
+                    None
                 }
+            })
+            .collect();
+        for (idx, body) in fn_bodies {
+            if let Item::Fn(ref mut f) = program.items[idx] {
+                self.analyze_fn(f, &body)?;
             }
         }
 
         Ok(())
     }
 
-    fn analyze_fn(&mut self, def: &FnDef, body: &[Stmt]) -> Result<(), CompileError> {
+    fn analyze_const(
+        &mut self,
+        name: &str,
+        ty: Option<&Type>,
+        init: &Expr,
+        span: Span,
+    ) -> Result<(), CompileError> {
+        let (val_ty, const_val) = self.eval_const_expr(init)?;
+        let final_ty = if let Some(expected_ty) = ty {
+            if !is_assignable(expected_ty, &val_ty) {
+                return Err(CompileError::new(
+                    "SEM_003",
+                    format!(
+                        "type mismatch: cannot assign {} to {}",
+                        val_ty.name(),
+                        expected_ty.name()
+                    ),
+                    Some(span),
+                ));
+            }
+            expected_ty.clone()
+        } else {
+            val_ty
+        };
+
+        self.symbols.register_const(crate::sema::symbols::ConstSymbol {
+            name: name.to_string(),
+            ty: final_ty,
+            value: const_val,
+        });
+        Ok(())
+    }
+
+    pub fn eval_const_expr(
+        &self,
+        expr: &Expr,
+    ) -> Result<(Type, crate::sema::symbols::ConstValue), CompileError> {
+        use crate::sema::symbols::ConstValue;
+        match expr {
+            Expr::IntLit(n, _) => Ok((Type::I32, ConstValue::Int(*n))),
+            Expr::BoolLit(b, _) => Ok((Type::Bool, ConstValue::Bool(*b))),
+            Expr::StringLit(s, _) => {
+                Ok((Type::Pointer(Box::new(Type::U8)), ConstValue::Str(s.clone())))
+            }
+            Expr::Ident(name, span) => {
+                if let Some(cs) = self.symbols.lookup_const(name) {
+                    Ok((cs.ty.clone(), cs.value.clone()))
+                } else {
+                    Err(CompileError::new(
+                        "SEM_001",
+                        format!("cannot find constant '{}' in this scope", name),
+                        Some(*span),
+                    ))
+                }
+            }
+            Expr::Unary(UnaryOp::Neg, inner, span) => {
+                let (ty, val) = self.eval_const_expr(inner)?;
+                match val {
+                    ConstValue::Int(n) => Ok((ty, ConstValue::Int(-n))),
+                    _ => Err(CompileError::new(
+                        "SEM_003",
+                        "cannot negate non-integer constant",
+                        Some(*span),
+                    )),
+                }
+            }
+            Expr::Unary(UnaryOp::Not, inner, span) => {
+                let (ty, val) = self.eval_const_expr(inner)?;
+                match val {
+                    ConstValue::Bool(b) => Ok((ty, ConstValue::Bool(!b))),
+                    _ => Err(CompileError::new(
+                        "SEM_003",
+                        "cannot invert non-boolean constant",
+                        Some(*span),
+                    )),
+                }
+            }
+            Expr::Unary(UnaryOp::BitNot, inner, span) => {
+                let (ty, val) = self.eval_const_expr(inner)?;
+                match val {
+                    ConstValue::Int(n) => Ok((ty, ConstValue::Int(!n))),
+                    _ => Err(CompileError::new(
+                        "SEM_003",
+                        "cannot bitwise invert non-integer constant",
+                        Some(*span),
+                    )),
+                }
+            }
+            Expr::Binary(op, left, right, span) => {
+                let (_, lval) = self.eval_const_expr(left)?;
+                let (_, rval) = self.eval_const_expr(right)?;
+                match (lval, rval) {
+                    (ConstValue::Int(l), ConstValue::Int(r)) => {
+                        let res = match op {
+                            BinaryOp::Add => ConstValue::Int(l + r),
+                            BinaryOp::Sub => ConstValue::Int(l - r),
+                            BinaryOp::Mul => ConstValue::Int(l * r),
+                            BinaryOp::Div => {
+                                if r == 0 {
+                                    return Err(CompileError::new(
+                                        "SEM_014",
+                                        "division by zero in constant",
+                                        Some(*span),
+                                    ));
+                                }
+                                ConstValue::Int(l / r)
+                            }
+                            BinaryOp::Mod => {
+                                if r == 0 {
+                                    return Err(CompileError::new(
+                                        "SEM_014",
+                                        "division by zero in constant",
+                                        Some(*span),
+                                    ));
+                                }
+                                ConstValue::Int(l % r)
+                            }
+                            BinaryOp::BitAnd => ConstValue::Int(l & r),
+                            BinaryOp::BitOr => ConstValue::Int(l | r),
+                            BinaryOp::BitXor => ConstValue::Int(l ^ r),
+                            BinaryOp::Shl => ConstValue::Int(l << r),
+                            BinaryOp::Shr => ConstValue::Int(l >> r),
+                            BinaryOp::Eq => return Ok((Type::Bool, ConstValue::Bool(l == r))),
+                            BinaryOp::Ne => return Ok((Type::Bool, ConstValue::Bool(l != r))),
+                            BinaryOp::Lt => return Ok((Type::Bool, ConstValue::Bool(l < r))),
+                            BinaryOp::Le => return Ok((Type::Bool, ConstValue::Bool(l <= r))),
+                            BinaryOp::Gt => return Ok((Type::Bool, ConstValue::Bool(l > r))),
+                            BinaryOp::Ge => return Ok((Type::Bool, ConstValue::Bool(l >= r))),
+                            _ => {
+                                return Err(CompileError::new(
+                                    "SEM_003",
+                                    "unsupported binary op on constants",
+                                    Some(*span),
+                                ))
+                            }
+                        };
+                        Ok((Type::I32, res))
+                    }
+                    (ConstValue::Bool(l), ConstValue::Bool(r)) => {
+                        let res = match op {
+                            BinaryOp::And => ConstValue::Bool(l && r),
+                            BinaryOp::Or => ConstValue::Bool(l || r),
+                            BinaryOp::Eq => ConstValue::Bool(l == r),
+                            BinaryOp::Ne => ConstValue::Bool(l != r),
+                            _ => {
+                                return Err(CompileError::new(
+                                    "SEM_003",
+                                    "unsupported boolean op on constants",
+                                    Some(*span),
+                                ))
+                            }
+                        };
+                        Ok((Type::Bool, res))
+                    }
+                    _ => Err(CompileError::new(
+                        "SEM_003",
+                        "type mismatch in constant expression",
+                        Some(*span),
+                    )),
+                }
+            }
+            _ => Err(CompileError::new(
+                "SEM_003",
+                "expression is not a valid constant",
+                Some(expr.span()),
+            )),
+        }
+    }
+
+    fn analyze_fn(&mut self, def: &mut FnDef, body: &[Stmt]) -> Result<(), CompileError> {
         self.symbols.enter_scope();
 
         // Register parameters with positive offsets: EBP + 8, EBP + 12, etc.
@@ -146,11 +329,23 @@ impl SemanticAnalyzer {
 
         // Track local variable offsets (negative from EBP)
         let mut local_offset = -4;
+        let mut local_offset_min = local_offset;
         for stmt in body {
             self.analyze_stmt(stmt, &def.name, &def.ret_ty, &mut local_offset)?;
+            if local_offset < local_offset_min {
+                local_offset_min = local_offset;
+            }
         }
 
         self.symbols.exit_scope();
+
+        // Compute stack space needed for locals (0 when no locals declared).
+        if local_offset_min < -4 {
+            def.stack_size = (-local_offset_min) - 4;
+        } else {
+            def.stack_size = 0;
+        }
+
         Ok(())
     }
 
@@ -272,7 +467,60 @@ impl SemanticAnalyzer {
                 }
                 self.symbols.exit_scope();
             }
-            Stmt::Const { .. } => {}
+            Stmt::For { init, cond, step, body, span } => {
+                self.symbols.enter_scope();
+                // 1. Analyze init
+                match init.as_ref() {
+                    Stmt::LetWrapper(inner) => {
+                        self.analyze_stmt(inner, fn_name, expected_ret, local_offset)?;
+                    }
+                    Stmt::ExprInit(e, _) => {
+                        let _ = self.type_of_expr(e)?;
+                    }
+                    _ => {}
+                }
+                // 2. Analyze condition
+                let cond_ty = match self.type_of_expr(cond) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.symbols.exit_scope();
+                        return Err(e);
+                    }
+                };
+                if !matches!(cond_ty, Type::Bool | Type::I32 | Type::U32 | Type::Pointer(_)) {
+                    self.symbols.exit_scope();
+                    return Err(CompileError::new(
+                        "SEM_008",
+                        format!(
+                            "for condition must be a bool, integer, or pointer, found {}",
+                            cond_ty.name()
+                        ),
+                        Some(*span),
+                    ));
+                }
+                // 3. Analyze step expression
+                if let Err(e) = self.type_of_expr(step) {
+                    self.symbols.exit_scope();
+                    return Err(e);
+                }
+                // 4. Analyze body statements
+                for s in body {
+                    if let Err(e) = self.analyze_stmt(s, fn_name, expected_ret, local_offset) {
+                        self.symbols.exit_scope();
+                        return Err(e);
+                    }
+                }
+                self.symbols.exit_scope();
+            }
+            Stmt::LetWrapper(inner) => {
+                let _ = self.analyze_stmt(inner, fn_name, expected_ret, local_offset)?;
+            }
+            Stmt::ExprInit(e, _) => {
+                let _ = self.type_of_expr(e)?;
+            }
+            Stmt::Const { name, ty, init, span } => {
+                self.analyze_const(name, ty.as_ref(), init, *span)?;
+            }
         }
         Ok(())
     }
@@ -285,6 +533,8 @@ impl SemanticAnalyzer {
             Expr::Ident(name, span) => {
                 if let Some(sym) = self.symbols.lookup_var(name) {
                     Ok(sym.ty.clone())
+                } else if let Some(cs) = self.symbols.lookup_const(name) {
+                    Ok(cs.ty.clone())
                 } else {
                     Err(CompileError::new(
                         "SEM_001",
@@ -331,19 +581,46 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::Unary(op, inner, span) => {
-                let ty = self.type_of_expr(inner)?;
                 match op {
-                    UnaryOp::Neg | UnaryOp::BitNot => Ok(ty),
-                    UnaryOp::Not => Ok(Type::Bool),
-                    UnaryOp::AddrOf => Ok(Type::Pointer(Box::new(ty))),
-                    UnaryOp::Deref => match ty {
-                        Type::Pointer(inner_ty) => Ok(*inner_ty),
-                        _ => Err(CompileError::new(
-                            "SEM_010",
-                            format!("cannot dereference a non-pointer value of type {}", ty.name()),
-                            Some(*span),
-                        )),
-                    },
+                    UnaryOp::AddrOf => {
+                        match &**inner {
+                            Expr::Ident(name, id_span) => {
+                                if self.symbols.lookup_var(name).is_none() {
+                                    return Err(CompileError::new(
+                                        "SEM_001",
+                                        format!("cannot find value '{}' in this scope", name),
+                                        Some(*id_span),
+                                    ));
+                                }
+                            }
+                            Expr::Unary(UnaryOp::Deref, _, _) => {}
+                            _ => {
+                                return Err(CompileError::new(
+                                    "SEM_013",
+                                    "cannot take the address of a non-variable expression",
+                                    Some(*span),
+                                ));
+                            }
+                        }
+                        let ty = self.type_of_expr(inner)?;
+                        Ok(Type::Pointer(Box::new(ty)))
+                    }
+                    _ => {
+                        let ty = self.type_of_expr(inner)?;
+                        match op {
+                            UnaryOp::Neg | UnaryOp::BitNot => Ok(ty),
+                            UnaryOp::Not => Ok(Type::Bool),
+                            UnaryOp::AddrOf => unreachable!(),
+                            UnaryOp::Deref => match ty {
+                                Type::Pointer(inner_ty) => Ok(*inner_ty),
+                                _ => Err(CompileError::new(
+                                    "SEM_010",
+                                    format!("cannot dereference a non-pointer value of type {}", ty.name()),
+                                    Some(*span),
+                                )),
+                            },
+                        }
+                    }
                 }
             }
             Expr::Call { callee, args, span } => {
@@ -404,6 +681,24 @@ impl SemanticAnalyzer {
                 Ok(Type::I32)
             }
             Expr::Assign { target, value, span } => {
+                if let Expr::Ident(name, id_span) = &**target {
+                    if self.symbols.lookup_const(name).is_some() {
+                        return Err(CompileError::new(
+                            "SEM_004",
+                            format!("cannot assign to constant '{}'", name),
+                            Some(*id_span),
+                        ));
+                    }
+                    if let Some(sym) = self.symbols.lookup_var(name) {
+                        if !sym.is_mut {
+                            return Err(CompileError::new(
+                                "SEM_004",
+                                format!("cannot assign twice to immutable variable '{}'", name),
+                                Some(*id_span),
+                            ));
+                        }
+                    }
+                }
                 let target_ty = self.type_of_expr(target)?;
                 let val_ty = self.type_of_expr(value)?;
                 if !is_assignable(&target_ty, &val_ty) {
