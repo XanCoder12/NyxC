@@ -135,7 +135,7 @@ fn main() {
         };
 
         let mut parser = Parser::new(tokens);
-        let program = match parser.parse_program() {
+        let mut program = match parser.parse_program() {
             Ok(p) => p,
             Err(e) => {
                 eprint!("{}", render(&file_display, &source, &e));
@@ -144,7 +144,7 @@ fn main() {
         };
 
         let mut analyzer = SemanticAnalyzer::new();
-        if let Err(e) = analyzer.analyze_program(&program) {
+        if let Err(e) = analyzer.analyze_program(&mut program) {
             eprint!("{}", render(&file_display, &source, &e));
             process::exit(1);
         }
