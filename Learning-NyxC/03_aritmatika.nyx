@@ -12,6 +12,6 @@ fn main() -> i32 {
     let bagi: i32 = a / b
     let sisa: i32 = a % b
 
-    sys::write(1, "aritmatika", 15)
+    sys::write(1, "Aritmatika OK!\n", str_len("Aritmatika OK!\n"))
     return 0
 }
