@@ -111,7 +111,7 @@ impl<'a> X86GasCodegen<'a> {
     }
 
     fn itoa_routine() -> &'static str {
-        // arg n in [esp+4]; result pointer in eax; clobbers eax/edx only
+        // arg n in [esp+16]; result pointer in eax
         "
 .nyx_itoa:
     push ebx
@@ -120,24 +120,24 @@ impl<'a> X86GasCodegen<'a> {
     lea esi, [.nyx_itoa_buf]
     add esi, 12
     movb [esi], 0
-    mov ebx, [esp + 16]
+    mov eax, [esp + 16]
     mov ecx, 0
-    test ebx, ebx
+    test eax, eax
     jns .nyx_itoa_abs
-    mov ecx, -1
-    neg ebx
+    mov ecx, 1
+    neg eax
 .nyx_itoa_abs:
+    mov ebx, 10
 .nyx_itoa_digit:
     mov edx, 0
-    mov eax, 10
-    idiv eax
+    div ebx
     add dl, 48
     dec esi
     movb [esi], dl
-    test ebx, ebx
+    test eax, eax
     jnz .nyx_itoa_digit
     test ecx, ecx
-    je .nyx_itoa_done
+    jz .nyx_itoa_done
     dec esi
     movb [esi], 45
 .nyx_itoa_done:
@@ -177,7 +177,9 @@ impl<'a> X86GasCodegen<'a> {
         asm.push_str(&format!("{}:\n", fn_label));
         asm.push_str("    push ebp\n");
         asm.push_str("    mov ebp, esp\n");
-        asm.push_str("    sub esp, 256\n"); // Pre-allocate local stack frame
+        if def.stack_size > 0 {
+            asm.push_str(&format!("    sub esp, {}\n", def.stack_size));
+        }
 
         for stmt in body {
             asm.push_str(&self.generate_stmt(stmt)?);
@@ -259,6 +261,37 @@ impl<'a> X86GasCodegen<'a> {
                     asm.push_str(&self.generate_stmt(s)?);
                 }
             }
+            Stmt::For { init, cond, step, body, .. } => {
+                let loop_start = self.new_label("for_start");
+                let loop_end = self.new_label("for_end");
+
+                // Execute init statement once (before the loop)
+                asm.push_str(&self.generate_stmt(init)?);
+
+                // Condition check
+                asm.push_str(&format!("{}:\n", loop_start));
+                asm.push_str(&self.generate_expr(cond)?);
+                asm.push_str("    test eax, eax\n");
+                asm.push_str(&format!("    jz {}\n", loop_end));
+
+                // Body
+                for s in body {
+                    asm.push_str(&self.generate_stmt(s)?);
+                }
+
+                // Step expression (e.g., increment)
+                asm.push_str(&self.generate_expr(step)?);
+
+                // Jump back to condition check
+                asm.push_str(&format!("    jmp {}\n", loop_start));
+                asm.push_str(&format!("{}:\n", loop_end));
+            }
+            Stmt::LetWrapper(inner) => {
+                asm.push_str(&self.generate_stmt(inner.as_ref())?);
+            }
+            Stmt::ExprInit(expr, _) => {
+                asm.push_str(&self.generate_expr(expr.as_ref())?);
+            }
             Stmt::Const { .. } => {}
         }
 
@@ -282,6 +315,18 @@ impl<'a> X86GasCodegen<'a> {
             Expr::Ident(name, span) => {
                 if let Some(sym) = self.lookup_var(name) {
                     asm.push_str(&format!("    mov eax, [ebp + ({})]\n", sym.offset));
+                } else if let Some(cs) = self.analyzer.symbols.lookup_const(name) {
+                    use crate::sema::symbols::ConstValue;
+                    match &cs.value {
+                        ConstValue::Int(n) => asm.push_str(&format!("    mov eax, {}\n", n)),
+                        ConstValue::Bool(b) => {
+                            asm.push_str(&format!("    mov eax, {}\n", if *b { 1 } else { 0 }))
+                        }
+                        ConstValue::Str(s) => {
+                            let str_id = self.add_string_literal(s);
+                            asm.push_str(&format!("    lea eax, [.LC{}]\n", str_id));
+                        }
+                    }
                 } else {
                     return Err(CompileError::new(
                         "GEN_002",
@@ -328,6 +373,31 @@ impl<'a> X86GasCodegen<'a> {
                     }
                 }
             }
+            Expr::Unary(UnaryOp::AddrOf, inner, span) => {
+                match &**inner {
+                    Expr::Ident(name, ident_span) => {
+                        if let Some(sym) = self.lookup_var(name) {
+                            asm.push_str(&format!("    lea eax, [ebp + ({})]\n", sym.offset));
+                        } else {
+                            return Err(CompileError::new(
+                                "GEN_002",
+                                format!("undefined variable '{}'", name),
+                                Some(*ident_span),
+                            ));
+                        }
+                    }
+                    Expr::Unary(UnaryOp::Deref, ptr_expr, _) => {
+                        asm.push_str(&self.generate_expr(ptr_expr)?);
+                    }
+                    _ => {
+                        return Err(CompileError::new(
+                            "GEN_004",
+                            "cannot take address of non-variable expression",
+                            Some(*span),
+                        ));
+                    }
+                }
+            }
             Expr::Unary(op, inner, _) => {
                 asm.push_str(&self.generate_expr(inner)?);
                 match op {
@@ -339,13 +409,7 @@ impl<'a> X86GasCodegen<'a> {
                     }
                     UnaryOp::BitNot => asm.push_str("    not eax\n"),
                     UnaryOp::Deref => asm.push_str("    mov eax, [eax]\n"),
-                    UnaryOp::AddrOf => {
-                        if let Expr::Ident(name, _) = &**inner {
-                            if let Some(sym) = self.lookup_var(name) {
-                                asm.push_str(&format!("    lea eax, [ebp + ({})]\n", sym.offset));
-                            }
-                        }
-                    }
+                    UnaryOp::AddrOf => unreachable!(),
                 }
             }
             Expr::Binary(op, left, right, _) => {
