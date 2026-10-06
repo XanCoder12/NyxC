@@ -9,6 +9,20 @@ pub struct Symbol {
     pub offset: i32, // Stack frame offset relative to EBP (negative for locals, positive for args)
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstValue {
+    Int(i64),
+    Bool(bool),
+    Str(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ConstSymbol {
+    pub name: String,
+    pub ty: Type,
+    pub value: ConstValue,
+}
+
 #[derive(Debug, Clone)]
 pub struct FnSymbol {
     pub name: String,
@@ -41,6 +55,7 @@ pub struct SymbolTable {
     scopes: Vec<Scope>,
     functions: HashMap<String, FnSymbol>,
     fn_locals: HashMap<String, HashMap<String, Symbol>>,
+    constants: HashMap<String, ConstSymbol>,
 }
 
 impl SymbolTable {
@@ -49,6 +64,7 @@ impl SymbolTable {
             scopes: vec![Scope::new()],
             functions: HashMap::new(),
             fn_locals: HashMap::new(),
+            constants: HashMap::new(),
         }
     }
 
@@ -93,5 +109,13 @@ impl SymbolTable {
 
     pub fn lookup_fn(&self, name: &str) -> Option<&FnSymbol> {
         self.functions.get(name)
+    }
+
+    pub fn register_const(&mut self, const_sym: ConstSymbol) {
+        self.constants.insert(const_sym.name.clone(), const_sym);
+    }
+
+    pub fn lookup_const(&self, name: &str) -> Option<&ConstSymbol> {
+        self.constants.get(name)
     }
 }
