@@ -186,6 +186,7 @@ impl Parser {
             ret_ty,
             body,
             is_extern,
+            stack_size: 0,
             span: start,
         })
     }
@@ -248,6 +249,7 @@ impl Parser {
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
             TokenKind::LBrace => {
                 let start = self.advance().span;
                 let inner = self.parse_block_stmts()?;
@@ -339,6 +341,50 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
 
         Ok(Stmt::While { cond, body, span: start })
+    }
+
+    fn parse_for(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.expect(TokenKind::For)?.span;
+        self.expect(TokenKind::LParen)?;
+
+        // init statement (e.g., "let i = 0" or "i = 0")
+        let init_span = self.peek().span;
+        let init = if matches!(self.peek_kind(), TokenKind::Let) {
+            let let_stmt = self.parse_let()?;
+            Box::new(Stmt::LetWrapper(Box::new(let_stmt)))
+        } else {
+            let expr = self.parse_expr()?;
+            self.expect(TokenKind::Semicolon)?;
+            Box::new(Stmt::ExprInit(Box::new(expr), init_span))
+        };
+
+        // condition expression
+        let cond = self.parse_expr()?;
+
+        self.expect(TokenKind::Semicolon)?;
+
+        // step expression (may be empty)
+        let step = if matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+            Box::new(Expr::IntLit(1, start)) // default increment: +1
+        } else {
+            Box::new(self.parse_expr()?)
+        };
+
+        self.expect(TokenKind::RParen)?;
+
+        // body
+        self.skip_newlines();
+        self.expect(TokenKind::LBrace)?;
+        let body = self.parse_block_stmts()?;
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(Stmt::For {
+            init,
+            cond,
+            step,
+            body,
+            span: start,
+        })
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr, CompileError> {
