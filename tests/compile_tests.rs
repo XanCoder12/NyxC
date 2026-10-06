@@ -44,9 +44,9 @@ fn test_semantic_analysis() {
             return add(10, 20)
         }
     "#;
-    let prog = parse(src);
+    let mut prog = parse(src);
     let mut sema = SemanticAnalyzer::new();
-    assert!(sema.analyze_program(&prog).is_ok());
+    assert!(sema.analyze_program(&mut prog).is_ok());
 }
 
 #[test]
@@ -60,9 +60,9 @@ fn test_let_type_inference() {
             return b
         }
     "#;
-    let prog = parse(src);
+    let mut prog = parse(src);
     let mut sema = SemanticAnalyzer::new();
-    assert!(sema.analyze_program(&prog).is_ok());
+    assert!(sema.analyze_program(&mut prog).is_ok());
 }
 
 #[test]
@@ -90,12 +90,50 @@ fn test_const_explicit_type_still_parses() {
 #[test]
 fn test_semantic_error_carries_span() {
     let src = "fn main() -> i32 { let a = missing }\n";
-    let prog = parse(src);
+    let mut prog = parse(src);
     let mut sema = SemanticAnalyzer::new();
-    let err = sema.analyze_program(&prog).unwrap_err();
+    let err = sema.analyze_program(&mut prog).unwrap_err();
     assert_eq!(err.code, "SEM_001");
     let span = err.span.expect("semantic error must carry a span");
     assert_eq!(span.line, 1);
+}
+
+#[test]
+fn test_const_usage() {
+    let src = r#"
+        const ANSWER = 42
+        fn main() -> i32 {
+            return ANSWER
+        }
+    "#;
+    let mut prog = parse(src);
+    let mut sema = SemanticAnalyzer::new();
+    assert!(sema.analyze_program(&mut prog).is_ok());
+}
+
+#[test]
+fn test_mutability_enforced() {
+    let src = "fn main() -> i32 { let x = 10; x = 20; return x }\n";
+    let mut prog = parse(src);
+    let mut sema = SemanticAnalyzer::new();
+    let err = sema.analyze_program(&mut prog).unwrap_err();
+    assert_eq!(err.code, "SEM_004");
+}
+
+#[test]
+fn test_for_loop_with_let() {
+    let src = r#"
+        fn main() -> i32 {
+            let mut sum = 0
+            for (let mut i = 0; i < 10; i = i + 1) {
+                sum = sum + i
+            }
+            return sum
+        }
+    "#;
+    let mut prog = parse(src);
+    let mut sema = SemanticAnalyzer::new();
+    assert!(sema.analyze_program(&mut prog).is_ok());
 }
 
 #[test]
@@ -164,4 +202,72 @@ fn test_compile_e2e_elf() {
     let result = Driver::compile(options);
     assert!(result.is_ok(), "Driver failed: {:?}", result.err());
     assert!(std::path::Path::new("target/test_program.elf").exists());
+}
+
+#[test]
+fn test_itoa_asm_generation() {
+    let test_file = "target/itoa_test.nyx";
+    let src = r#"
+        import "nyx/sys"
+
+        fn main() -> i32 {
+            let s = itoa(42)
+            sys::write(1, s, 2)
+            return 0
+        }
+    "#;
+    fs::write(test_file, src).expect("failed to write test file");
+
+    let options = CompileOptions {
+        input_file: test_file.into(),
+        output_file: Some("target/itoa_test.elf".into()),
+        target: Target::nyxara_x86(),
+        emit_asm: false,
+        keep_intermediates: true,
+    };
+
+    let result = Driver::compile(options);
+    assert!(result.is_ok(), "Driver failed: {:?}", result.err());
+    let asm = fs::read_to_string("target/itoa_test.s").expect("failed to read .s");
+    assert!(asm.contains(".nyx_itoa:"), "itoa routine missing");
+    assert!(asm.contains("div ebx"), "proper division missing from itoa");
+}
+
+#[test]
+fn test_emit_asm_custom_output() {
+    let test_file = "target/custom_asm_test.nyx";
+    let out_file = "target/custom_dir/my_asm.s";
+    let src = "fn main() -> i32 { return 0 }\n";
+    fs::write(test_file, src).expect("failed to write test file");
+
+    let options = CompileOptions {
+        input_file: test_file.into(),
+        output_file: Some(out_file.into()),
+        target: Target::nyxara_x86(),
+        emit_asm: true,
+        keep_intermediates: false,
+    };
+
+    let result = Driver::compile(options);
+    assert!(result.is_ok(), "Driver failed: {:?}", result.err());
+    assert_eq!(result.unwrap(), std::path::PathBuf::from(out_file));
+    assert!(std::path::Path::new(out_file).exists());
+}
+
+#[test]
+fn test_cannot_assign_to_const() {
+    let src = "const N = 100\nfn main() -> i32 { N = 200; return N }\n";
+    let mut prog = parse(src);
+    let mut sema = SemanticAnalyzer::new();
+    let err = sema.analyze_program(&mut prog).unwrap_err();
+    assert_eq!(err.code, "SEM_004");
+}
+
+#[test]
+fn test_addr_of_invalid_expr() {
+    let src = "fn main() -> i32 { let p = &(1 + 2); return 0 }\n";
+    let mut prog = parse(src);
+    let mut sema = SemanticAnalyzer::new();
+    let err = sema.analyze_program(&mut prog).unwrap_err();
+    assert_eq!(err.code, "SEM_013");
 }
