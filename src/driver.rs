@@ -35,11 +35,11 @@ impl Driver {
 
         // 2. Parser
         let mut parser = Parser::new(tokens);
-        let program = parser.parse_program()?;
+        let mut program = parser.parse_program()?;
 
         // 3. Semantic Analysis
         let mut analyzer = SemanticAnalyzer::new();
-        analyzer.analyze_program(&program)?;
+        analyzer.analyze_program(&mut program)?;
 
         // 4. Codegen (x86 GNU as assembly)
         let asm_code = generate_x86_assembly(&program, &analyzer)?;
@@ -55,7 +55,20 @@ impl Driver {
             .parent()
             .unwrap_or_else(|| Path::new("."));
 
-        let asm_path = parent_dir.join(format!("{}.s", stem));
+        let asm_path = if options.emit_asm {
+            if let Some(out) = &options.output_file {
+                out.clone()
+            } else {
+                parent_dir.join(format!("{}.s", stem))
+            }
+        } else {
+            parent_dir.join(format!("{}.s", stem))
+        };
+
+        if let Some(p) = asm_path.parent() {
+            let _ = fs::create_dir_all(p);
+        }
+
         fs::write(&asm_path, &asm_code).map_err(|e| {
             CompileError::new(
                 "IO_002",
@@ -95,6 +108,10 @@ impl Driver {
         let out_elf = options.output_file.unwrap_or_else(|| {
             parent_dir.join(format!("{}.elf", stem))
         });
+
+        if let Some(p) = out_elf.parent() {
+            let _ = fs::create_dir_all(p);
+        }
 
         let mut ld_cmd = Command::new("ld");
         ld_cmd.arg("-m").arg("elf_i386");
