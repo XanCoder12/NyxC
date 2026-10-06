@@ -8,13 +8,14 @@ Folder ini berisi materi latihan dasar untuk memahami sintaksis dan fitur bahasa
 
 | File | Topik | Konsep yang Dipelajari |
 |---|---|---|
-| [`01_hello.nyx`](file:///home/akrom/Projects/NyxC/belajar/01_hello.nyx) | Hello World | Struktur fungsi `main`, `import "nyx/sys"`, dan output teks |
-| [`02_variabel.nyx`](file:///home/akrom/Projects/NyxC/belajar/02_variabel.nyx) | Variabel & Konstanta | `let` (immutable), `let mut` (mutable), dan `const` |
-| [`03_aritmatika.nyx`](file:///home/akrom/Projects/NyxC/belajar/03_aritmatika.nyx) | Aritmatika | Operator `+`, `-`, `*`, `/`, `%` pada tipe `i32` |
-| [`04_if_else.nyx`](file:///home/akrom/Projects/NyxC/belajar/04_if_else.nyx) | Percabangan | Logika `if`, `else if`, `else`, dan operator perbandingan (`>=`, `<`, `==`) |
-| [`05_while.nyx`](file:///home/akrom/Projects/NyxC/belajar/05_while.nyx) | Perulangan | Loop `while` dengan variabel counter `mut` |
-| [`06_fungsi.nyx`](file:///home/akrom/Projects/NyxC/belajar/06_fungsi.nyx) | Fungsi Kustom | Definisi `fn name(params) -> return_type` dan pemanggilan fungsi |
-| [`07_syscall.nyx`](file:///home/akrom/Projects/NyxC/belajar/07_syscall.nyx) | Syscall Nyxara OS | Interaksi syscall kernel (seperti `sys::write`) |
+| [`01_hello.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/01_hello.nyx) | Hello World | Struktur fungsi `main`, `import "nyx/sys"`, dan output teks |
+| [`02_variabel.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/02_variabel.nyx) | Variabel & Konstanta | `let` (immutable), `let mut` (mutable), dan `const` |
+| [`03_aritmatika.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/03_aritmatika.nyx) | Aritmatika | Operator `+`, `-`, `*`, `/`, `%` pada tipe `i32` |
+| [`04_if_else.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/04_if_else.nyx) | Percabangan | Logika `if`, `else if`, `else`, dan operator perbandingan (`>=`, `<`, `==`) |
+| [`05_while.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/05_while.nyx) | Perulangan | Loop `while` dengan variabel counter `mut` |
+| [`06_fungsi.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/06_fungsi.nyx) | Fungsi Kustom | Definisi `fn name(params) -> return_type` dan pemanggilan fungsi |
+| [`07_syscall.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/07_syscall.nyx) | Syscall Nyxara OS | Interaksi syscall kernel (seperti `sys::write`) |
+| [`08_perkenalan.nyx`](file:///home/akrom/Projects/NyxC/Learning-NyxC/08_perkenalan.nyx) | Builtin Output | Fungsi bawaan `print` dan `println` |
 
 ---
 
