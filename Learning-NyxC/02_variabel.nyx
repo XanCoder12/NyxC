@@ -12,7 +12,9 @@ fn main() -> i32 {
     // variabel mutable bisa diubah nilainya
     y = y + x
 
-    // cetak pesan berhasil
-    sys::write(1, "Variabel OK!\n", str_len("Variabel OK!\n"))
+    // menggunakan konstanta MAX
+    if y < MAX {
+        sys::write(1, "Variabel & Const OK!\n", str_len("Variabel & Const OK!\n"))
+    }
     return 0
 }
