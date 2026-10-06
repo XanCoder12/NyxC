@@ -4,5 +4,5 @@ fn main() -> i32 {
     println("1.0")
     print("Saya Akrom dan saya akan membuat OS dan bahasa Pemrogramannya sendiri!")
     println("ini adalah OS pertama saya")
-    0
+    return 0
 }
